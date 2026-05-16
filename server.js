@@ -1,6 +1,13 @@
+const express = require('express');
+const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+
+const app = express();
+
+app.use(cors());
+app.use(express.json());
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 const JWT_SECRET = process.env.JWT_SECRET || 'titkos-kulcs-123';
@@ -8,8 +15,7 @@ const SALT_ROUNDS = 10;
 
 //Memóriazár
 let isZarasFolyamatban = false;
-
-export default async function handler(req, res) {
+app.all('*', async (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const { method, url } = req;
     const path = url.split('?')[0];
@@ -166,40 +172,12 @@ export default async function handler(req, res) {
                 return res.json({ success: true });
             }
         }
-        if (path.startsWith('/api/kervenyek/') && path.split('/').length > 3) {
+        if (path.startsWith('/api/kervenyek/')) {
             const parts = path.split('/');
             const id = parts[3];
             const action = parts[4];
             
             // A kommentek fogadása
-            if (method === 'POST' && action === 'komment') {
-                const { szoveg } = req.body;
-                if (!szoveg) return res.status(400).json({ error: 'Üres üzenet!' });
-                
-                const { data: kerveny } = await supabase.from('kervenyek').select('kommentek').eq('id', id).single();
-                let komms = kerveny.kommentek || [];
-                komms.push({ iro: user.ic_nev || user.nev, szoveg: szoveg, ido: new Date().toISOString(), iro_id: user.id });
-                
-                await supabase.from('kervenyek').update({ kommentek: komms }).eq('id', id);
-                return res.json({ success: true });
-            }
-
-            if (method === 'PUT' && !action) {
-                if (!user.jog_kerveny && user.rang !== 'DEV') return res.status(403).json({ error: 'Nincs jogosultságod erre!' });
-                await supabase.from('kervenyek').update({ statusz: req.body.statusz }).eq('id', id);
-                return res.json({ success: true });
-            }
-            if (method === 'DELETE' && !action) {
-                if (!user.jog_kerveny && user.rang !== 'DEV') return res.status(403).json({ error: 'Nincs jogosultságod erre!' });
-                await supabase.from('kervenyek').delete().eq('id', id);
-                return res.json({ success: true });
-            }
-        }
-        if (path.startsWith('/api/kervenyek/') && path.split('/').length > 3) {
-            const parts = path.split('/');
-            const id = parts[3];
-            const action = parts[4]; 
-            
             if (method === 'POST' && action === 'komment') {
                 const { szoveg } = req.body;
                 if (!szoveg) return res.status(400).json({ error: 'Üres üzenet!' });
@@ -247,14 +225,14 @@ export default async function handler(req, res) {
                 return res.json({ success: true });
             }
         }
-        if (path.startsWith('/api/akcio/') && !path.includes('archiválás')) {
+        if (path.startsWith('/api/akcio/')) {
             const id = path.split('/')[3], action = path.split('/')[4];
             
             if (method === 'PUT' && action === 'join') {
                 const { data: a } = await supabase.from('akciok').select('resztvevok').eq('id', id).single(); 
                 let r = a.resztvevok || []; r.push({ id: user.id, nev: user.nev, ic_nev: user.ic_nev, ido: new Date().toISOString() });
                 await supabase.from('akciok').update({ resztvevok: r }).eq('id', id); 
-                const { data: t } = await supabase.from('tagok').select('akcio_resztvett').eq('id', user.id).single(); 
+                const { data: t = 0 } = await supabase.from('tagok').select('akcio_resztvett').eq('id', user.id).single(); 
                 await supabase.from('tagok').update({ akcio_resztvett: (t.akcio_resztvett || 0) + 1 }).eq('id', user.id); 
                 return res.json({ success: true });
             }
@@ -373,4 +351,9 @@ export default async function handler(req, res) {
 
         res.status(404).send('Not Found');
     } catch (err) { res.status(500).json({ error: err.message }); }
-}
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`A Klani E Detit HQ szerver sikeresen elindult a ${PORT}-es porton!`);
+});
