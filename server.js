@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 
 const app = express();
 
+// CORS engedélyezése és JSON parzoló middleware-ek
 app.use(cors());
 app.use(express.json());
 
@@ -15,7 +16,9 @@ const SALT_ROUNDS = 10;
 
 //Memóriazár
 let isZarasFolyamatban = false;
-app.all('*', async (req, res) => {
+
+// Catch-all útvonal az összes API kérés kezelésére (Express 5 kompatibilis formátum)
+app.all('*any', async (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const { method, url } = req;
     const path = url.split('?')[0];
@@ -56,7 +59,7 @@ app.all('*', async (req, res) => {
             const { data: t } = await supabase.from('tagok').select('*').eq('id', user.id).single();
             if (!t) return res.json({ valid: false, deleted: true }); 
             if (t.rang !== user.rang) {
-                const { data: jog } = await supabase.from('jogosultsagok').select('*').eq('rang', t.rang).single();
+                const { data: jog = null } = await supabase.from('jogosultsagok').select('*').eq('rang', t.rang).single();
                 const isDev = t.rang === 'DEV';
                 
                 const newToken = jwt.sign({ 
@@ -353,6 +356,7 @@ app.all('*', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Szerver elindítása a Render által kiosztott dinamikus porton
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`A Klani E Detit HQ szerver sikeresen elindult a ${PORT}-es porton!`);
