@@ -1,14 +1,6 @@
-const express = require('express');
-const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-
-const app = express();
-
-// CORS engedélyezése és JSON parzoló middleware-ek
-app.use(cors());
-app.use(express.json());
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 const JWT_SECRET = process.env.JWT_SECRET || 'titkos-kulcs-123';
@@ -17,8 +9,7 @@ const SALT_ROUNDS = 10;
 //Memóriazár
 let isZarasFolyamatban = false;
 
-// Catch-all útvonal az összes API kérés kezelésére (Express 5 kompatibilis formátum)
-app.all('*any', async (req, res) => {
+export default async function handler(req, res) {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const { method, url } = req;
     const path = url.split('?')[0];
@@ -59,7 +50,7 @@ app.all('*any', async (req, res) => {
             const { data: t } = await supabase.from('tagok').select('*').eq('id', user.id).single();
             if (!t) return res.json({ valid: false, deleted: true }); 
             if (t.rang !== user.rang) {
-                const { data: jog = null } = await supabase.from('jogosultsagok').select('*').eq('rang', t.rang).single();
+                const { data: jog } = await supabase.from('jogosultsagok').select('*').eq('rang', t.rang).single();
                 const isDev = t.rang === 'DEV';
                 
                 const newToken = jwt.sign({ 
@@ -175,7 +166,7 @@ app.all('*any', async (req, res) => {
                 return res.json({ success: true });
             }
         }
-        if (path.startsWith('/api/kervenyek/')) {
+        if (path.startsWith('/api/kervenyek/') && path.split('/').length > 3) {
             const parts = path.split('/');
             const id = parts[3];
             const action = parts[4];
@@ -204,38 +195,77 @@ app.all('*any', async (req, res) => {
                 return res.json({ success: true });
             }
         }
+        if (path.startsWith('/api/kervenyek/') && path.split('/').length > 3) {
+            const parts = path.split('/');
+            const id = parts[3];
+            const action = parts[4]; 
+            
+            if (method === 'POST' && action === 'komment') {
+                const { szoveg } = req.body;
+                if (!szoveg) return res.status(400).json({ error: 'Üres üzenet!' });
+                
+                const { data: kerveny } = await supabase.from('kervenyek').select('kommentek').eq('id', id).single();
+                let komms = kerveny.kommentek || [];
+                komms.push({ iro: user.ic_nev || user.nev, szoveg: szoveg, ido: new Date().toISOString(), iro_id: user.id });
+                
+                await supabase.from('kervenyek').update({ kommentek: komms }).eq('id', id);
+                return res.json({ success: true });
+            }
+
+            if (method === 'PUT' && !action) {
+                if (!user.jog_kerveny && user.rang !== 'DEV') return res.status(403).json({ error: 'Nincs jogosultságod erre!' });
+                await supabase.from('kervenyek').update({ statusz: req.body.statusz }).eq('id', id);
+                return res.json({ success: true });
+            }
+            if (method === 'DELETE' && !action) {
+                if (!user.jog_kerveny && user.rang !== 'DEV') return res.status(403).json({ error: 'Nincs jogosultságod erre!' });
+                await supabase.from('kervenyek').delete().eq('id', id);
+                return res.json({ success: true });
+            }
+        }
 
         //AKCIÓK
-        if (path === '/api/akcio') {
-            if (method === 'GET') { const { data } = await supabase.from('akciok').select('*').order('datum', { ascending: false }); return res.json(data || []); }
-            if (method === 'POST') {
-                const tervezett = req.body.tervezett_ido ? req.body.tervezett_ido : null;
-                await supabase.from('akciok').insert([{ tipus: req.body.tipus, szervezo_id: user.id, szervezo_nev: user.ic_nev || user.nev, tervezett_ido: tervezett }]);
-                const { data: t } = await supabase.from('tagok').select('akcio_szervezett').eq('id', user.id).single(); 
-                await supabase.from('tagok').update({ akcio_szervezett: (t.akcio_szervezett || 0) + 1 }).eq('id', user.id); 
+        //Discord értesítés
+        const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL; 
 
-                const DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/1491388738927067187/zAcIXgjXZdt3bknRRLp4rMnj0paoGYDpu-WsYHg7YJtDeVSq4XS4wzO3CMoRVgXaqhti'; 
+        if (method === 'POST') {
+            const tervezett = req.body.tervezett_ido ? req.body.tervezett_ido : null;
+            await supabase.from('akciok').insert([{ tipus: req.body.tipus, szervezo_id: user.id, szervezo_nev: user.ic_nev || user.nev, tervezett_ido: tervezett }]);
+            const { data: t } = await supabase.from('tagok').select('akcio_szervezett').eq('id', user.id).single(); 
+            await supabase.from('tagok').update({ akcio_szervezett: (t.akcio_szervezett || 0) + 1 }).eq('id', user.id); 
+            if (DISCORD_WEBHOOK_URL) {
                 try {
                     let desc = `**Szervező:** ${user.ic_nev || user.nev}`;
                     if(tervezett) desc += `\n**Tervezett időpont:** ${new Date(tervezett).toLocaleString('hu-HU', { timeZone: 'Europe/Budapest' })}\n\nWeben tudtok jelentkezni!`;
                     
                     const discordMessage = {
                         content: "🚨 **Új esemény** 🚨 <@&1491389401606000661>",
-                        embeds: [{ title: `[ ${req.body.tipus} ]`, description: desc, color: 3066993, timestamp: new Date().toISOString() }]
+                        embeds: [{ 
+                            title: `[ ${req.body.tipus} ]`, 
+                            description: desc, 
+                            color: 3066993, 
+                            timestamp: new Date().toISOString() 
+                        }]
                     };
-                    await fetch(DISCORD_WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(discordMessage) });
-                } catch (err) {}
-                return res.json({ success: true });
+                    await fetch(DISCORD_WEBHOOK_URL, { 
+                        method: 'POST', 
+                        headers: { 'Content-Type': 'application/json' }, 
+                        body: JSON.stringify(discordMessage) 
+                    });
+                } catch (err) {
+                    console.error("Discord webhook hiba:", err);
+                }
             }
+            return res.json({ success: true });
         }
-        if (path.startsWith('/api/akcio/')) {
+        if (path.startsWith('/api/akcio/') && !path.includes('archiválás')) {
             const id = path.split('/')[3], action = path.split('/')[4];
             
             if (method === 'PUT' && action === 'join') {
                 const { data: a } = await supabase.from('akciok').select('resztvevok').eq('id', id).single(); 
                 let r = a.resztvevok || []; r.push({ id: user.id, nev: user.nev, ic_nev: user.ic_nev, ido: new Date().toISOString() });
                 await supabase.from('akciok').update({ resztvevok: r }).eq('id', id); 
-                const { data: t = 0 } = await supabase.from('tagok').select('akcio_resztvett').eq('id', user.id).single(); 
+                const { data: t } = await supabase.from('tagok').select('akcio_resztvett').eq('id', user.id).single(); 
                 await supabase.from('tagok').update({ akcio_resztvett: (t.akcio_resztvett || 0) + 1 }).eq('id', user.id); 
                 return res.json({ success: true });
             }
@@ -277,10 +307,27 @@ app.all('*any', async (req, res) => {
                 await supabase.from('tagok').update({ akcio_resztvett: Math.max(0, (t.akcio_resztvett || 0) - 1) }).eq('id', targetId);
                 return res.json({ success: true });
             }
-        }
-        if (path === '/api/akcio_archiv' && method === 'POST') { 
-            await supabase.from('akciok').update({ archivalva: true, aktiv: false }).eq('archivalva', false); 
-            await supabase.from('tagok').update({ akcio_szervezett: 0, akcio_resztvett: 0 }).gt('id', 0); return res.json({ success: true }); 
+
+            //TÖRLÉS FUNKCIÓ
+            if (method === 'DELETE' && !action) {
+                const { data: a } = await supabase.from('akciok').select('szervezo_id, resztvevok').eq('id', id).single();
+                if (a) {
+                    const { data: org } = await supabase.from('tagok').select('akcio_szervezett').eq('id', a.szervezo_id).single();
+                    if (org && org.akcio_szervezett > 0) {
+                        await supabase.from('tagok').update({ akcio_szervezett: org.akcio_szervezett - 1 }).eq('id', a.szervezo_id);
+                    }
+                    if (a.resztvevok && a.resztvevok.length > 0) {
+                        for (let r of a.resztvevok) {
+                            const { data: pTag } = await supabase.from('tagok').select('akcio_resztvett').eq('id', r.id).single();
+                            if (pTag && pTag.akcio_resztvett > 0) {
+                                await supabase.from('tagok').update({ akcio_resztvett: pTag.akcio_resztvett - 1 }).eq('id', r.id);
+                            }
+                        }
+                    }
+                }
+                await supabase.from('akciok').delete().eq('id', id);
+                return res.json({ success: true });
+            }
         }
 
         //KASSZA
@@ -354,10 +401,4 @@ app.all('*any', async (req, res) => {
 
         res.status(404).send('Not Found');
     } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// Szerver elindítása a Render által kiosztott dinamikus porton
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`A Klani E Detit HQ szerver sikeresen elindult a ${PORT}-es porton!`);
-});
+}
