@@ -225,7 +225,6 @@ export default async function handler(req, res) {
         }
 
         //AKCIÓK
-        //Discord értesítés
         if (path === '/api/akcio') {
             if (method === 'GET') { const { data } = await supabase.from('akciok').select('*').order('datum', { ascending: false }); return res.json(data || []); }
             if (method === 'POST') {
@@ -297,27 +296,10 @@ export default async function handler(req, res) {
                 await supabase.from('tagok').update({ akcio_resztvett: Math.max(0, (t.akcio_resztvett || 0) - 1) }).eq('id', targetId);
                 return res.json({ success: true });
             }
-
-            //TÖRLÉS FUNKCIÓ
-            if (method === 'DELETE' && !action) {
-                const { data: a } = await supabase.from('akciok').select('szervezo_id, resztvevok').eq('id', id).single();
-                if (a) {
-                    const { data: org } = await supabase.from('tagok').select('akcio_szervezett').eq('id', a.szervezo_id).single();
-                    if (org && org.akcio_szervezett > 0) {
-                        await supabase.from('tagok').update({ akcio_szervezett: org.akcio_szervezett - 1 }).eq('id', a.szervezo_id);
-                    }
-                    if (a.resztvevok && a.resztvevok.length > 0) {
-                        for (let r of a.resztvevok) {
-                            const { data: pTag } = await supabase.from('tagok').select('akcio_resztvett').eq('id', r.id).single();
-                            if (pTag && pTag.akcio_resztvett > 0) {
-                                await supabase.from('tagok').update({ akcio_resztvett: pTag.akcio_resztvett - 1 }).eq('id', r.id);
-                            }
-                        }
-                    }
-                }
-                await supabase.from('akciok').delete().eq('id', id);
-                return res.json({ success: true });
-            }
+        }
+        if (path === '/api/akcio_archiv' && method === 'POST') { 
+            await supabase.from('akciok').update({ archivalva: true, aktiv: false }).eq('archivalva', false); 
+            await supabase.from('tagok').update({ akcio_szervezett: 0, akcio_resztvett: 0 }).gt('id', 0); return res.json({ success: true }); 
         }
 
         //KASSZA
