@@ -9,7 +9,7 @@ const SALT_ROUNDS = 10;
 //Memóriazár
 let isZarasFolyamatban = false;
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const { method, url } = req;
     const path = url.split('?')[0];
