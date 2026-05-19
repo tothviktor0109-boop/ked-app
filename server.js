@@ -228,14 +228,14 @@ app.all('*any', async (req, res) => {
                 return res.json({ success: true });
             }
         }
-        if (path.startsWith('/api/akcio/')) {
+        if (path.startsWith('/api/akcio/') && !path.includes('archiválás')) {
             const id = path.split('/')[3], action = path.split('/')[4];
             
             if (method === 'PUT' && action === 'join') {
                 const { data: a } = await supabase.from('akciok').select('resztvevok').eq('id', id).single(); 
                 let r = a.resztvevok || []; r.push({ id: user.id, nev: user.nev, ic_nev: user.ic_nev, ido: new Date().toISOString() });
                 await supabase.from('akciok').update({ resztvevok: r }).eq('id', id); 
-                const { data: t = 0 } = await supabase.from('tagok').select('akcio_resztvett').eq('id', user.id).single(); 
+                const { data: t } = await supabase.from('tagok').select('akcio_resztvett').eq('id', user.id).single(); 
                 await supabase.from('tagok').update({ akcio_resztvett: (t.akcio_resztvett || 0) + 1 }).eq('id', user.id); 
                 return res.json({ success: true });
             }
@@ -278,16 +278,12 @@ app.all('*any', async (req, res) => {
                 return res.json({ success: true });
             }
             if (method === 'DELETE' && !action) {
-                // Lekérjük az akció adatait a törlés előtt
                 const { data: a } = await supabase.from('akciok').select('szervezo_id, resztvevok').eq('id', id).single();
                 if (a) {
-                    // 1. Szervező statisztikájának visszavonása (ha nagyobb mint 0)
                     const { data: org } = await supabase.from('tagok').select('akcio_szervezett').eq('id', a.szervezo_id).single();
                     if (org && org.akcio_szervezett > 0) {
                         await supabase.from('tagok').update({ akcio_szervezett: org.akcio_szervezett - 1 }).eq('id', a.szervezo_id);
                     }
-                    
-                    // 2. Esetleges résztvevők statisztikájának visszavonása
                     if (a.resztvevok && a.resztvevok.length > 0) {
                         for (let r of a.resztvevok) {
                             const { data: pTag } = await supabase.from('tagok').select('akcio_resztvett').eq('id', r.id).single();
@@ -297,7 +293,6 @@ app.all('*any', async (req, res) => {
                         }
                     }
                 }
-                // 3. Maga az akció végleges törlése
                 await supabase.from('akciok').delete().eq('id', id);
                 return res.json({ success: true });
             }
