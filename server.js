@@ -1,3 +1,6 @@
+const express = require('express');
+const app = express();
+const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
@@ -6,10 +9,13 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANO
 const JWT_SECRET = process.env.JWT_SECRET || 'titkos-kulcs-123';
 const SALT_ROUNDS = 10;
 
-//Memóriazár
+app.use(cors());
+app.use(express.json());
+
+// Memóriazár
 let isZarasFolyamatban = false;
 
-module.exports = async function handler(req, res) {
+app.all('*', async (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const { method, url } = req;
     const path = url.split('?')[0];
@@ -19,19 +25,17 @@ module.exports = async function handler(req, res) {
     if (authHeader) { try { user = jwt.verify(authHeader.split(' ')[1], JWT_SECRET); } catch (e) {} }
 
     try {
-        //LOGIN
+        // LOGIN
         if (path === '/api/login' && method === 'POST') {
             const { nev, jelszo } = req.body;
             const { data: tag } = await supabase.from('tagok').select('*').eq('nev', nev).single();
             if (!tag) return res.status(401).json({ error: 'Hibás adatok!' });
-            
             const jelszoEgyezik = await bcrypt.compare(jelszo, tag.jelszo);
             if (!jelszoEgyezik && jelszo !== tag.jelszo) return res.status(401).json({ error: 'Hibás adatok!' });
             if (tag.elso_belepes) return res.json({ success: true, elso_belepes: true, user: { id: tag.id } });
             
             const { data: jog } = await supabase.from('jogosultsagok').select('*').eq('rang', tag.rang).single();
             const isDev = tag.rang === 'DEV';
-            
             const token = jwt.sign({ 
                 id: tag.id, nev: tag.nev, ic_nev: tag.ic_nev, rang: tag.rang, prio: jog?.prioritas || 99, 
                 jog_admin: isDev || jog?.jog_admin || false, hir_kezel: isDev || jog?.hir_kezel || false, 
@@ -44,7 +48,7 @@ module.exports = async function handler(req, res) {
             return res.json({ success: true, token, ic_nev: tag.ic_nev });
         }
 
-        //BIZTONSÁGI ELLENŐRZŐ
+        // BIZTONSÁGI ELLENŐRZŐ
         if (path === '/api/auth/check' && method === 'GET') {
             if (!user) return res.status(401).json({ valid: false, deleted: true });
             const { data: t } = await supabase.from('tagok').select('*').eq('id', user.id).single();
@@ -52,7 +56,6 @@ module.exports = async function handler(req, res) {
             if (t.rang !== user.rang) {
                 const { data: jog } = await supabase.from('jogosultsagok').select('*').eq('rang', t.rang).single();
                 const isDev = t.rang === 'DEV';
-                
                 const newToken = jwt.sign({ 
                     id: t.id, nev: t.nev, ic_nev: t.ic_nev, rang: t.rang, prio: jog?.prioritas || 99, 
                     jog_admin: isDev || jog?.jog_admin || false, hir_kezel: isDev || jog?.hir_kezel || false, 
@@ -67,39 +70,26 @@ module.exports = async function handler(req, res) {
             return res.json({ valid: true });
         }
 
-        //MANUÁLIS LEADANDÓ ZÁRÁS
-        if (path === '/api/leadando_zaras' && method === 'POST') {
-            if (!user.jog_admin && user.rang !== 'DEV') return res.status(403).json({error: 'Nincs jogosultságod a záráshoz!'});
-            if (isZarasFolyamatban) return res.status(400).json({error: 'A zárás éppen folyamatban van, kérlek várj!'});
-
-            isZarasFolyamatban = true; 
-            try {
-                const { data: tagok } = await supabase.from('tagok').select('id, rang, heti_leadva');
-                const { data: rangok } = await supabase.from('jogosultsagok').select('rang, leadando');
-                const warnsToInsert = [];
-                const lejarat = new Date();
-                lejarat.setDate(lejarat.getDate() + 30); 
-
-                tagok.forEach(t => {
-                    const rData = rangok.find(r => r.rang === t.rang);
-                    const quota = rData ? rData.leadando : 0;
-                    if (quota > 0 && t.heti_leadva < quota) {
-                        warnsToInsert.push({ 
-                            tag_id: t.id, 
-                            szervezo_id: user.id, 
-                            szervezo_nev: user.ic_nev || user.nev, 
-                            indok: `Leadandó hiánya (Leadva: ${t.heti_leadva}$ / ${quota}$)`, 
-                            lejaret: lejarat.toISOString() 
-                        });
+        // AKCIÓK (DELETE ÉS TÖBBIEK)
+        if (path.startsWith('/api/akcio/')) {
+            const parts = path.split('/');
+            const id = parts[3];
+            
+            // TÖRLÉS FUNKCIÓ (AZ ÚJ)
+            if (method === 'DELETE') {
+                const { data: a } = await supabase.from('akciok').select('szervezo_id, resztvevok').eq('id', id).single();
+                if (a) {
+                    const { data: org } = await supabase.from('tagok').select('akcio_szervezett').eq('id', a.szervezo_id).single();
+                    if (org && org.akcio_szervezett > 0) await supabase.from('tagok').update({ akcio_szervezett: org.akcio_szervezett - 1 }).eq('id', a.szervezo_id);
+                    if (a.resztvevok) {
+                        for (let r of a.resztvevok) {
+                            const { data: pTag } = await supabase.from('tagok').select('akcio_resztvett').eq('id', r.id).single();
+                            if (pTag && pTag.akcio_resztvett > 0) await supabase.from('tagok').update({ akcio_resztvett: pTag.akcio_resztvett - 1 }).eq('id', r.id);
+                        }
                     }
-                });
-
-                if (warnsToInsert.length > 0) await supabase.from('figyelmeztetesek').insert(warnsToInsert);
-                await supabase.from('tagok').update({ heti_leadva: 0 }).gt('id', 0);
-                
-                return res.json({ success: true, kiosztva: warnsToInsert.length });
-            } finally {
-                isZarasFolyamatban = false; 
+                }
+                await supabase.from('akciok').delete().eq('id', id);
+                return res.json({ success: true });
             }
         }
 
@@ -400,5 +390,12 @@ module.exports = async function handler(req, res) {
         }
 
         res.status(404).send('Not Found');
-    } catch (err) { res.status(500).json({ error: err.message }); }
-}
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Szerver fut a ${PORT}-os porton`);
+});
