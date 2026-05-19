@@ -12,10 +12,8 @@ const SALT_ROUNDS = 10;
 app.use(cors());
 app.use(express.json());
 
-// Memóriazár
-let isZarasFolyamatban = false;
-
-app.all('*', async (req, res) => {
+// A '*' helyett használjunk reguláris kifejezést, ami minden útvonalra illeszkedik
+app.all(/.*/, async (req, res) => {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     const { method, url } = req;
     const path = url.split('?')[0];
@@ -74,8 +72,6 @@ app.all('*', async (req, res) => {
         if (path.startsWith('/api/akcio/')) {
             const parts = path.split('/');
             const id = parts[3];
-            
-            // TÖRLÉS FUNKCIÓ (AZ ÚJ)
             if (method === 'DELETE') {
                 const { data: a } = await supabase.from('akciok').select('szervezo_id, resztvevok').eq('id', id).single();
                 if (a) {
@@ -131,84 +127,38 @@ app.all('*', async (req, res) => {
             if (method === 'GET') {
                 const queryParams = new URLSearchParams(url.split('?')[1] || '');
                 const fetchAll = queryParams.get('all') === 'true';
-                
                 let q = supabase.from('kervenyek').select('*').order('datum', { ascending: false });
-                if (!user.jog_kerveny && user.rang !== 'DEV') {
-                    q = q.eq('bekuldo_id', user.id);
-                }
-                
-                if (!fetchAll) {
-                    q = q.in('statusz', ['Függőben', 'Folyamatban']);
-                }
-                
+                if (!user.jog_kerveny && user.rang !== 'DEV') q = q.eq('bekuldo_id', user.id);
+                if (!fetchAll) q = q.in('statusz', ['Függőben', 'Folyamatban']);
                 const { data } = await q;
                 return res.json(data || []);
             }
             if (method === 'POST') {
                 const { data: activeList } = await supabase.from('kervenyek').select('id').eq('bekuldo_id', user.id).eq('statusz', 'Függőben');
-                if (activeList && activeList.length > 0) {
-                    return res.status(400).json({ error: 'Már van egy elbírálásra váró kérvényed! Várj türelemmel.' });
-                }
-                await supabase.from('kervenyek').insert([{ 
-                    bekuldo_id: user.id, bekuldo_nev: user.ic_nev || user.nev, 
-                    cim: req.body.cim, tartalom: req.body.tartalom, statusz: 'Függőben', kommentek: []
-                }]);
+                if (activeList && activeList.length > 0) return res.status(400).json({ error: 'Már van nyitott kérvényed!' });
+                await supabase.from('kervenyek').insert([{ bekuldo_id: user.id, bekuldo_nev: user.ic_nev || user.nev, cim: req.body.cim, tartalom: req.body.tartalom, statusz: 'Függőben', kommentek: [] }]);
                 return res.json({ success: true });
             }
         }
-        if (path.startsWith('/api/kervenyek/') && path.split('/').length > 3) {
+        if (path.startsWith('/api/kervenyek/')) {
             const parts = path.split('/');
             const id = parts[3];
             const action = parts[4];
-            
-            // A kommentek fogadása
             if (method === 'POST' && action === 'komment') {
                 const { szoveg } = req.body;
-                if (!szoveg) return res.status(400).json({ error: 'Üres üzenet!' });
-                
                 const { data: kerveny } = await supabase.from('kervenyek').select('kommentek').eq('id', id).single();
                 let komms = kerveny.kommentek || [];
                 komms.push({ iro: user.ic_nev || user.nev, szoveg: szoveg, ido: new Date().toISOString(), iro_id: user.id });
-                
                 await supabase.from('kervenyek').update({ kommentek: komms }).eq('id', id);
                 return res.json({ success: true });
             }
-
             if (method === 'PUT' && !action) {
-                if (!user.jog_kerveny && user.rang !== 'DEV') return res.status(403).json({ error: 'Nincs jogosultságod erre!' });
+                if (!user.jog_kerveny && user.rang !== 'DEV') return res.status(403).json({ error: 'Nincs jogosultságod!' });
                 await supabase.from('kervenyek').update({ statusz: req.body.statusz }).eq('id', id);
                 return res.json({ success: true });
             }
             if (method === 'DELETE' && !action) {
-                if (!user.jog_kerveny && user.rang !== 'DEV') return res.status(403).json({ error: 'Nincs jogosultságod erre!' });
-                await supabase.from('kervenyek').delete().eq('id', id);
-                return res.json({ success: true });
-            }
-        }
-        if (path.startsWith('/api/kervenyek/') && path.split('/').length > 3) {
-            const parts = path.split('/');
-            const id = parts[3];
-            const action = parts[4]; 
-            
-            if (method === 'POST' && action === 'komment') {
-                const { szoveg } = req.body;
-                if (!szoveg) return res.status(400).json({ error: 'Üres üzenet!' });
-                
-                const { data: kerveny } = await supabase.from('kervenyek').select('kommentek').eq('id', id).single();
-                let komms = kerveny.kommentek || [];
-                komms.push({ iro: user.ic_nev || user.nev, szoveg: szoveg, ido: new Date().toISOString(), iro_id: user.id });
-                
-                await supabase.from('kervenyek').update({ kommentek: komms }).eq('id', id);
-                return res.json({ success: true });
-            }
-
-            if (method === 'PUT' && !action) {
-                if (!user.jog_kerveny && user.rang !== 'DEV') return res.status(403).json({ error: 'Nincs jogosultságod erre!' });
-                await supabase.from('kervenyek').update({ statusz: req.body.statusz }).eq('id', id);
-                return res.json({ success: true });
-            }
-            if (method === 'DELETE' && !action) {
-                if (!user.jog_kerveny && user.rang !== 'DEV') return res.status(403).json({ error: 'Nincs jogosultságod erre!' });
+                if (!user.jog_kerveny && user.rang !== 'DEV') return res.status(403).json({ error: 'Nincs jogosultságod!' });
                 await supabase.from('kervenyek').delete().eq('id', id);
                 return res.json({ success: true });
             }
@@ -388,14 +338,9 @@ app.all('*', async (req, res) => {
             await supabase.from('tagok').update({ jelszo: hp, elso_belepes: false }).eq('id', req.body.userId); 
             return res.json({ success: true }); 
         }
-
         res.status(404).send('Not Found');
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Szerver fut a ${PORT}-os porton`);
-});
+app.listen(PORT, () => { console.log(`Szerver fut a ${PORT}-os porton`); });
