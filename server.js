@@ -359,7 +359,18 @@ app.all('*any', async (req, res) => {
                 
                 p.warnings = w.map(x => ({ ...x, aktiv_allapot: x.aktiv && (!x.lejaret || new Date(x.lejaret) > new Date()), indok: (user.jog_warn || user.id === id || user.rang === 'DEV') ? x.indok : '*** Rejtett ***' })); 
                 return res.json(p); 
-            } else { await supabase.from('tagok').update(req.body).eq('id', id); return res.json({ success: true }); } 
+            } else { 
+                let updateData = req.body;
+                if (updateData.profilkep && updateData.profilkep.includes('imgur.com') && !updateData.profilkep.match(/\.(jpeg|jpg|png|gif|webp)$/i)) {
+                    const match = updateData.profilkep.match(/imgur\.com\/(?:a\/|gallery\/)?([a-zA-Z0-9]+)/);
+                    if (match && match[1]) {
+                        updateData.profilkep = `https://i.imgur.com/${match[1]}.jpeg`;
+                    }
+                }
+                
+                await supabase.from('tagok').update(updateData).eq('id', id); 
+                return res.json({ success: true }); 
+            } 
         }
 
         //HÍREK ÉS JELSZÓ
@@ -378,5 +389,5 @@ app.all('*any', async (req, res) => {
 // Szerver elindítása a Render által kiosztott dinamikus porton
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`A Klani E Detit HQ szerver sikeresen elindult a ${PORT}-es porton!`);
+    console.log(`A szerver sikeresen elindult a ${PORT}-es porton!`);
 });
