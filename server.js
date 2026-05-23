@@ -122,7 +122,8 @@ app.all('*any', async (req, res) => {
             if (method === 'POST') {
                 const { osszeg, bizonyitek } = req.body;
                 if (!osszeg || isNaN(osszeg)) return res.status(400).json({error: 'Érvénytelen összeg!'});
-                await supabase.from('kassza_log').insert([{ tipus: 'be', osszeg: parseInt(osszeg), operator: user.ic_nev || user.nev, bizonyitek: bizonyitek || 'Heti Leadandó' }]);
+                await supabase.from('kassza_log').insert([{ tipus: 'be', osszeg: parseInt(osszeg), operator: user.ic_nev || user.nev, bizonyitek: bizonyitek || 'Heti Leadandó', forras: 'leadando' }]);
+                
                 const { data: t } = await supabase.from('tagok').select('heti_leadva').eq('id', user.id).single();
                 await supabase.from('tagok').update({ heti_leadva: (t.heti_leadva || 0) + parseInt(osszeg) }).eq('id', user.id);
                 return res.json({ success: true });
