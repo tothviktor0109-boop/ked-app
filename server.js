@@ -388,7 +388,7 @@ app.all('*any', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Szerver elindítása a Render által kiosztott dinamikus porton
+// Szerver elindítása
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`A Klani E Detit HQ szerver sikeresen elindult a ${PORT}-es porton!`);
